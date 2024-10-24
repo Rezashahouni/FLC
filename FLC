@@ -1,0 +1,112 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+
+
+class PIDController:
+    def __init__(self, Kp, Ki, Kd, setpoint):
+        self.Kp = Kp
+        self.Ki = Ki
+        self.Kd = Kd
+        self.setpoint = setpoint
+        self.integral = 0
+        self.previous_error = 0
+
+    def update(self, process_variable, dt):
+        error = self.setpoint - process_variable
+        # Normalize error
+        error = np.clip(error, -10, 10)
+        self.integral += error * dt
+        self.integral = np.clip(self.integral, -10, 10)
+        derivative = (error - self.previous_error) / dt
+        derivative = np.clip(derivative, -10, 10)
+        output = self.Kp * error + self.Ki * self.integral + self.Kd * derivative
+        self.previous_error = error
+        return output
+
+
+# Define Fuzzy Variables
+error = ctrl.Antecedent(np.arange(-10, 10, 0.1), 'error')
+d_error = ctrl.Antecedent(np.arange(-10, 10, 0.1), 'd_error')
+Kp_fuzz = ctrl.Consequent(np.arange(0, 10, 0.1), 'Kp_fuzz')
+Ki_fuzz = ctrl.Consequent(np.arange(0, 10, 0.1), 'Ki_fuzz')
+Kd_fuzz = ctrl.Consequent(np.arange(0, 10, 0.1), 'Kd_fuzz')
+
+# Define Membership Functions
+error.automf(3)
+d_error.automf(3)
+Kp_fuzz.automf(3)
+Ki_fuzz.automf(3)
+Kd_fuzz.automf(3)
+
+# Define Fuzzy Rules
+rules = [
+    ctrl.Rule(error['poor'] & d_error['poor'], (Kp_fuzz['good'], Ki_fuzz['good'], Kd_fuzz['poor'])),
+    ctrl.Rule(error['average'] & d_error['average'], (Kp_fuzz['average'], Ki_fuzz['average'], Kd_fuzz['average'])),
+    ctrl.Rule(error['good'] & d_error['good'], (Kp_fuzz['poor'], Ki_fuzz['poor'], Kd_fuzz['good']))
+]
+
+# Create Control System and Simulation
+pid_ctrl = ctrl.ControlSystem(rules)
+pid_tuner = ctrl.ControlSystemSimulation(pid_ctrl)
+
+# Simulation parameters
+time = np.linspace(0, 10, 1000)  # 10 seconds, 1000 points
+dt = time[1] - time[0]
+
+# Define multiple setpoints at different time intervals
+setpoints = np.piecewise(time,
+                         [time < 3, (time >= 3) & (time < 7), time >= 7],
+                         [5.0, 8.0, 10.0])
+
+# Initialize PID controller with initial values
+pid = PIDController(1.0, 0.1, 0.05, setpoints[0])
+
+# Process variables
+process_variable = 0.0
+process_values = []
+Kp_values = []
+Ki_values = []
+Kd_values = []
+
+# Simulation loop with FLC tuning
+for t, sp in zip(time, setpoints):
+    pid.setpoint = sp
+    pid_tuner.input['error'] = pid.setpoint - process_variable
+    pid_tuner.input['d_error'] = (pid.setpoint - process_variable) / dt
+    pid_tuner.compute()
+
+    pid.Kp = pid_tuner.output['Kp_fuzz']
+    pid.Ki = pid_tuner.output['Ki_fuzz']
+    pid.Kd = pid_tuner.output['Kd_fuzz']
+
+    control_signal = pid.update(process_variable, dt)
+    process_variable += np.clip(control_signal * dt, -10, 10)  # Simple process model
+    process_values.append(process_variable)
+    Kp_values.append(pid.Kp)
+    Ki_values.append(pid.Ki)
+    Kd_values.append(pid.Kd)
+
+# Plotting the results
+plt.figure(figsize=(10, 5))
+plt.plot(time, process_values, label='Process Value')
+plt.plot(time, setpoints, label='Setpoint', linestyle='--')
+plt.xlabel('Time (min)')
+plt.ylabel('Process Value')
+plt.title('PID Controller Tuned with FLC')
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Plotting the PID parameters
+plt.figure(figsize=(10, 5))
+plt.plot(time, Kp_values, label='Kp')
+plt.plot(time, Ki_values, label='Ki')
+plt.plot(time, Kd_values, label='Kd')
+plt.xlabel('Time (min)')
+plt.ylabel('PID Parameters')
+plt.title('PID Parameters Over Time')
+plt.legend()
+plt.grid(True)
+plt.show()
